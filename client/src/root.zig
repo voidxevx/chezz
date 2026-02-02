@@ -4,3 +4,4 @@
 pub const board = @import("board.zig");
 pub const util = @import("util.zig");
 pub const bp = @import("boardposition.zig");
+pub const ptm = @import("peicetypemask.zig");

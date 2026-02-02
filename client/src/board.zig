@@ -3,18 +3,22 @@
 //! where each bit is a position on an 8x8 board.\
 //! The board is essentially a global class that is entirely encapsuled by this module.
 
-// STANDARD LIBRARIES
-const std = @import("std");
-const expect = std.testing.expect;
+// pch
+const std = @import("pch.zig").std;
+const expect = @import("pch.zig").expect;
 
 const util = @import("util.zig");
 const bp = @import("boardposition.zig");
+const ptm = @import("peicetypemask.zig");
 
 /// Board errors - Errors that can be returned by the board if something goes wrong.
 pub const BoardError = error {
     BoardAlreadyInitialized,
     BoardNotYetInitialized,
 };
+
+// tracking for board initialization status.
+pub var board_initialized = false;
 
 
 test "Board position with u8 sizing" {
@@ -73,6 +77,8 @@ pub fn init() !void {
             try line.append(BoardAllocator, "");
         try FormattedBoard.?.append(BoardAllocator, line);
     }
+
+    board_initialized = true;
 }
 
 /// Frees the layers of the board and resets the board to be reinitialized again later.\
@@ -91,6 +97,8 @@ pub fn deinit() void {
     // free the entire formatted board.
     FormattedBoard.?.deinit(BoardAllocator);
     FormattedBoard = null;
+
+    board_initialized = false;
 }
 
 test "Initialize and terminate board" {
@@ -165,7 +173,7 @@ pub fn updateFormattedBoard() !void {
 
             // get the formatted string
             const color = MatchGridHighlightState(@enumFromInt(state));
-            square.* = try std.mem.concat(BoardAllocator, u8, &.{color, "*", " \x1b[0m"});
+            square.* = try std.mem.concat(BoardAllocator, u8, &.{color, " ", " \x1b[0m"});
         }
     }
 }
@@ -196,4 +204,14 @@ pub fn setBoardPosition(comptime sizing: anytype, position: *const bp.BoardPosit
         r_Board[layer] |= transpose;
     } else
         return BoardError.BoardNotYetInitialized;
+}
+
+/// list of all peice masks each mask holds the character that will be printed.
+/// The index in the array coresponds with the index on the board array that marks 
+/// if there is a peice of that type at that location.
+var masks: std.ArrayList(ptm.PeiceMask) = .empty;
+
+/// Adds a mask to the list of masks.
+pub fn addPeiceMask(mask: ptm.PeiceMask) !void {
+    try masks.append(BoardAllocator, mask);
 }

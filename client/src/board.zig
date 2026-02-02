@@ -7,16 +7,8 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-/// The board size is always and 8x8 grid.
-const BoardSize = 8;
-
-/// There is a set amount of layers that make up the board
-/// for example there is one layer for each peice type.
-const BoardLayerCount = 4;
-
-/// Each layer of the board is 64 bit integer that way there
-/// is a bit that coresponds to every square on the 8x8 grid.
-const BoardLayerType = u64;
+const util = @import("util.zig");
+const bp = @import("boardposition.zig");
 
 /// Board errors - Errors that can be returned by the board if something goes wrong.
 pub const BoardError = error {
@@ -24,67 +16,10 @@ pub const BoardError = error {
     BoardNotYetInitialized,
 };
 
-/// BoardPositions stores a vector 2d that represents a location on the 8x8 grid. 
-/// A board position must be within the size of the board in order for it to be valid.\
-/// Positions can be sized differently using different types for the x and y value
-/// by default u8 is used but using something like a float can be useful 
-/// when you need to store fractional positions.
-pub fn BoardPosition(comptime T: anytype) type {
-    // compiletime assertion for types being integers or floats
-    const info = @typeInfo(T);
-    if (info != .int and info != .float) {
-        @compileError("[BOARD] Board position can only be sized by integer or float types.");
-    }
-
-    return struct {
-        // These values don't need to be deallocated because they get allocated on the stack.
-
-        /// X position on the board
-        Xpos: T,
-
-        /// Y position on the board
-        Ypos: T,
-
-        /// Positions errors - Errors that are created the board positions
-        /// for example if the position is out of bounds.
-        pub const PositionError = error {
-            PositionOutOfBounds,
-        };
-
-        /// Creates a position on the board using a specified numeric type for sizing.
-        pub fn init(x: T, y: T) !BoardPosition(T) {
-            if (x > BoardSize or y > BoardSize)
-                return PositionError.PositionOutOfBounds;
-
-            return .{
-                .Xpos = x,
-                .Ypos = y,
-            };
-        }
-
-        /// Converts the xy position stored by the BoardPosition and transposes it to the bit location it corelates to.
-        pub fn transpose(self: *const BoardPosition(T)) !BoardLayerType {
-            if (self.Xpos > BoardSize or self.Ypos > BoardSize)
-                return PositionError.PositionOutOfBounds;
-
-            return @as(BoardLayerType, (self.Ypos * BoardSize) + self.Xpos);
-        }
-
-        /// Translates a position by the value of another position.
-        pub fn translate(self: *BoardPosition(T), other: *const BoardPosition(T)) !void {
-            self.Xpos += other.Xpos;
-            self.Ypos += other.Ypos;
-
-            if (self.Xpos > BoardSize or self.Ypos > BoardSize)
-                return PositionError.PositionOutOfBounds;
-        }
-
-    };
-} 
 
 test "Board position with u8 sizing" {
     // create a u8 board location
-    const pos = try BoardPosition(u8).init(1, 1);
+    const pos = try bp.BoardPosition(u8).init(1, 1);
     // assert it was accuratly created
     try expect(pos.Xpos == 1 and pos.Ypos == 1);
 
@@ -93,7 +28,7 @@ test "Board position with u8 sizing" {
     try expect(trans == 9);
 
     // mutable position
-    var pos2 = try BoardPosition(u8).init(5, 3);
+    var pos2 = try bp.BoardPosition(u8).init(5, 3);
     // translating a position
     try pos2.translate(&pos);
     // assert the translation works.
@@ -110,14 +45,33 @@ test "Board position with u8 sizing" {
 const BoardAllocator = std.heap.page_allocator;
 
 /// The layers of the board.\
-/// This is the maim variable that dictates what the board looks like.
-var Board: ?[]BoardLayerType = undefined;
+/// This is the main variable that dictates what the board looks like.
+var Board: ?[]util.BoardLayerType = null;
+
+/// Formatted board used for printing.
+/// Uses the board layers as a reference of where each peices 
+/// are and how they should be rendered.
+pub var FormattedBoard: ?std.ArrayList(std.ArrayList([]const u8)) = null;
 
 /// Initializes and allocates the board's layers.\
 /// This will throw an error if the board was already initialized.
 pub fn init() !void {
-    if (Board) |_| {
+    if (Board) |_|
         return BoardError.BoardAlreadyInitialized;
+
+    Board = try BoardAllocator.alloc(util.BoardLayerType, util.BoardLayerCount);
+    for (0..util.BoardLayerCount) |i|
+        Board.?[i] = 0;
+
+    if (FormattedBoard) |_|
+        return BoardError.BoardAlreadyInitialized;
+
+    FormattedBoard = try std.ArrayList(std.ArrayList([]const u8)).initCapacity(BoardAllocator, util.BoardSize);
+    for (0..util.BoardSize) |_| {
+        var line = try std.ArrayList([]const u8).initCapacity(BoardAllocator, util.BoardSize);
+        for (0..util.BoardSize) |_|
+            try line.append(BoardAllocator, "");
+        try FormattedBoard.?.append(BoardAllocator, line);
     }
 }
 
@@ -126,10 +80,120 @@ pub fn init() !void {
 /// simply because using defer with this function is crucial for memory handling.
 pub fn deinit() void {
     BoardAllocator.free(Board.?);
-    Board = undefined;
+    Board = null;
+
+    // free each row of the formatted board
+    while (FormattedBoard.?.items.len > 0) {
+        var popped = FormattedBoard.?.pop();
+        popped.?.deinit(BoardAllocator);
+    }
+
+    // free the entire formatted board.
+    FormattedBoard.?.deinit(BoardAllocator);
+    FormattedBoard = null;
 }
 
 test "Initialize and terminate board" {
     try init();
     defer deinit();
+}
+
+/// Maps the state of a grid point into it type by a 3 bit bitset.
+const GridHighlightState = enum(u3) {
+    Normal_Primary     = 0b000,
+    Normal_Secondary   = 0b001,
+    Selected_Primary   = 0b010,
+    Selected_Secondary = 0b011,
+    Movable_Primary    = 0b100,
+    Movable_Secondary  = 0b101,
+    SelMov_Primary     = 0b110,
+    SelMov_Secondary   = 0b111,
+};
+
+/// matches the grid state to its coloration 
+fn MatchGridHighlightState(state: GridHighlightState) []const u8 {
+    switch (state) {
+        // white
+        GridHighlightState.Normal_Primary     => return "\x1b[47m\x1b[30m ",
+        // black
+        GridHighlightState.Normal_Secondary   => return "\x1b[40m\x1b[37m ",
+
+        // cyan
+        GridHighlightState.Selected_Primary   => return "\x1b[46m\x1b[35m ",
+        // magenta
+        GridHighlightState.Selected_Secondary => return "\x1b[45m\x1b[36m ",
+
+        // yellow
+        GridHighlightState.Movable_Primary,
+        GridHighlightState.Movable_Secondary  => return "\x1b[43m\x1b[30m ",
+
+        // blue
+        GridHighlightState.SelMov_Primary     => return "\x1b[44m\x1b[31m ",
+        // red
+        GridHighlightState.SelMov_Secondary   => return "\x1b[41m\x1b[34m ",
+    }
+}
+
+/// Updates the formatted board to match the binary board veiw.\
+/// This must be called before the board gets printed.
+pub fn updateFormattedBoard() !void {
+    if (FormattedBoard == null) {
+        return BoardError.BoardNotYetInitialized;
+    }
+
+    var r_FBoard = &FormattedBoard.?;
+    for (0..util.BoardSize) |y| {
+        var line = &r_FBoard.items[y];
+        for (0..util.BoardSize) |x| {
+            const square = &line.items[x];
+            BoardAllocator.free(square.*);
+            const pos = try bp.BoardPosition(usize).init(x, y);
+            const transpose = try pos.transpose();
+
+            // determine the squares state
+
+            var state: u3 = 0b0;
+            // if the sqaure is white or black
+            if ((x + y) % 2 == 0)
+                state |= 0b1;
+            // if the square is selected
+            if ((Board.?[0] & transpose) > 0)
+                state |= 0b10;
+            // if the square is movable
+            if ((Board.?[1] & transpose) > 0)
+                state |= 0b100;
+
+            // get the formatted string
+            const color = MatchGridHighlightState(@enumFromInt(state));
+            square.* = try std.mem.concat(BoardAllocator, u8, &.{color, "*", " \x1b[0m"});
+        }
+    }
+}
+
+test "Update formatted board and print it" {
+    try init();
+    defer deinit();
+
+    try updateFormattedBoard();
+
+    // print out board
+    if (FormattedBoard) |r_FBoard| {
+        for (r_FBoard.items) |line| {
+            for (line.items) |square|
+                std.debug.print("{s}", .{square});
+            std.debug.print("\n", .{});
+        }
+    }
+}
+
+
+/// Sets a position in a layer on the board to be true. 
+/// This is used to set where a peice of a specific type is located
+/// on the board.
+pub fn setBoardPosition(comptime sizing: anytype, position: *const bp.BoardPosition(sizing), layer: usize) !void {
+    if (Board) |r_Board| {
+        const transpose = try position.transpose();
+        r_Board[layer] |= transpose;
+    } else
+        return BoardError.BoardNotYetInitialized;
 }

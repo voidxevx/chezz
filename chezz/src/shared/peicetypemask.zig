@@ -1,4 +1,4 @@
-const std = @import("pch.zig").std;
+const std = @import("core").std;
 
 pub const PeiceMask = struct {
     charMask: u8,

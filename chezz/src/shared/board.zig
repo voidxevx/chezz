@@ -4,8 +4,8 @@
 //! The board is essentially a global class that is entirely encapsuled by this module.
 
 // pch
-const std = @import("pch.zig").std;
-const expect = @import("pch.zig").expect;
+const std = @import("core").std;
+const expect = @import("core").expect;
 
 const util = @import("util.zig");
 const bp = @import("boardposition.zig");

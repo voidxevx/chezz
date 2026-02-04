@@ -1,1 +1,0 @@
-const cgt = @import("clientgametypes.zig");

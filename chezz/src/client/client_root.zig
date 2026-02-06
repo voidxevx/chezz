@@ -2,6 +2,7 @@ const std = @import("core").std;
 const chezz = @import("chezz_shared");
 
 const socket = @import("clientsocket.zig");
+const win = @import("window.zig");
 
 /// general allocator for startup allocations.
 const generalAllocator = std.heap.page_allocator;
@@ -15,6 +16,13 @@ const ArguementErrors = error {
 /// main function -- handles the initialization of all segments of the game.\
 /// Holds the main game loop that propegates the tick updates.
 pub fn main() !void {
+
+    var windowbuilder = win.WindowBuilder.init();
+    try windowbuilder.setWidthHeight(35, 65);
+    try windowbuilder.setTitle("Chezz");
+    try windowbuilder.noTitleOffset();
+    const window: *win.Window = windowbuilder.win();
+    if (window) {}
 
     // initialize the board
     try chezz.board.init();

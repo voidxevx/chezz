@@ -12,3 +12,7 @@ pub const BoardLayerCount = 2;
 /// Each layer of the board is 64 bit integer that way there
 /// is a bit that coresponds to every square on the 8x8 grid.
 pub const BoardLayerType = u64;
+
+
+/// the port that both the client and server use.
+pub const port = 5409;
